@@ -1,0 +1,17 @@
+altgraph==0.17.4
+defusedxml==0.7.1
+ezodf==0.3.2
+Jinja2==3.1.6
+lxml==6.0.2
+MarkupSafe==3.0.3
+odfpy==1.4.1
+packaging==25.0
+pyinstaller==6.16.0
+pyinstaller-hooks-contrib==2025.9
+PySide6==6.10.1
+PySide6_Addons==6.10.1
+PySide6_Essentials==6.10.1
+PyYAML==6.0.3
+qt-material==2.17
+setuptools==80.9.0
+shiboken6==6.10.1
