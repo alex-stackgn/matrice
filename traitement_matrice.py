@@ -24,55 +24,119 @@ from qt_material import apply_stylesheet
 # ==============================================================================
 # 1. LOGIQUE MÉTIER (BACKEND)
 # ==============================================================================
+# Cette section contient toute la logique de manipulation des fichiers ODS,
+# indépendamment de l'interface graphique.
 
-A1_RE = re.compile(r"^([A-Za-z]+)(\d+)$")
-RANGE_RE = re.compile(r"^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$")
-VER_RE = re.compile(r'(.*?)(v)(\d+(?:\.\d+)*)(.*)$', re.IGNORECASE)
-INVALID_FS_CHARS = set('/\\:*?"<>|')
+# --- Expressions Régulières Globales ---
+A1_RE = re.compile(r"^([A-Za-z]+)(\d+)$")  # Pour parser les adresses type "A1", "B2", etc.
+RANGE_RE = re.compile(r"^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$")  # Pour parser les plages type "A1:C5"
+VER_RE = re.compile(r'(.*?)(v)(\d+(?:\.\d+)*)(.*)$', re.IGNORECASE)  # Pour trouver un numéro de version (ex: v1.2)
+INVALID_FS_CHARS = set('/\\:*?"<>|')  # Caractères invalides dans les noms de fichiers
 
 
 def a1_to_rc(a1: str):
+    """
+    Convertit une adresse de cellule de type A1 (ex: "B3") en coordonnées (ligne, colonne)
+    basées sur un index zéro (ex: (2, 1)).
+
+    Args:
+        a1 (str): L'adresse de la cellule au format A1.
+
+    Returns:
+        tuple[int, int]: Un tuple (ligne, colonne) avec index à partir de zéro.
+
+    Raises:
+        ValueError: Si le format de l'adresse est invalide.
+    """
     m = A1_RE.match(a1.strip())
     if not m: raise ValueError(f"Adresse invalide : {a1}")
     col_letters, row_str = m.groups()
     col = 0
+    # Convertit les lettres de la colonne en un nombre (A=0, B=1, ..., Z=25, AA=26, etc.)
     for ch in col_letters.upper(): col = col * 26 + (ord(ch) - ord('A') + 1)
-    col -= 1
+    col -= 1  # Ajustement pour un index basé sur zéro
     return int(row_str) - 1, col
 
 
 def parse_range(rng: str):
+    """
+    Analyse une chaîne représentant une plage (ex: "A1:C5") ou une seule cellule ("B2")
+    et retourne les coordonnées (ligne, colonne) de début et de fin.
+
+    Args:
+        rng (str): La chaîne représentant la plage.
+
+    Returns:
+        tuple[int, int, int, int]: Un tuple (ligne_début, col_début, ligne_fin, col_fin).
+                                   Pour une cellule unique, les coordonnées de début et de fin sont identiques.
+    """
     rng = rng.strip()
     m = RANGE_RE.match(rng)
     if m:
+        # C'est une plage (ex: "A1:C5")
         c1, r1, c2, r2 = m.groups()
         r1, c1 = a1_to_rc(f"{c1}{r1}")
         r2, c2 = a1_to_rc(f"{c2}{r2}")
+        # S'assure que le coin supérieur gauche est bien le point de départ
         if r2 < r1 or c2 < c1:
             r1, r2 = min(r1, r2), max(r1, r2)
             c1, c2 = min(c1, c2), max(c1, c2)
         return r1, c1, r2, c2
     else:
+        # C'est une seule cellule (ex: "B2")
         r, c = a1_to_rc(rng)
         return r, c, r, c
 
 
 def get_sheet(doc, sheet_name: str):
+    """
+    Récupère un objet feuille de calcul à partir de son nom dans un document ODS.
+
+    Args:
+        doc: L'objet document `ezodf` ouvert.
+        sheet_name (str): Le nom de la feuille à trouver.
+
+    Returns:
+        ezodf.Sheet: L'objet feuille de calcul correspondant.
+
+    Raises:
+        ValueError: Si la feuille n'est pas trouvée.
+    """
     for sh in doc.sheets:
         if sh.name == sheet_name: return sh
     raise ValueError(f"Feuille introuvable: {sheet_name}")
 
 
 def ensure_size(sheet, r, c):
+    """
+    Vérifie si une feuille est assez grande pour contenir une cellule aux coordonnées (r, c).
+    Si non, ajoute les lignes et/ou colonnes nécessaires.
+
+    Args:
+        sheet (ezodf.Sheet): La feuille de calcul à vérifier/modifier.
+        r (int): L'index de la ligne (base zéro).
+        c (int): L'index de la colonne (base zéro).
+    """
     nrows, ncols = sheet.nrows(), sheet.ncols()
     if r >= nrows: sheet.append_rows(r - nrows + 1)
     if c >= ncols: sheet.append_columns(c - ncols + 1)
 
 
 def set_cell_value(sheet, a1: str, value, typ: str):
+    """
+    Définit la valeur d'une cellule en utilisant son adresse A1.
+    La fonction gère la conversion de type (string, int, float).
+
+    Args:
+        sheet (ezodf.Sheet): La feuille de calcul à modifier.
+        a1 (str): L'adresse de la cellule (ex: "A1").
+        value: La valeur à insérer.
+        typ (str): Le type de la valeur ("string", "int", "float").
+    """
     r, c = a1_to_rc(a1)
     ensure_size(sheet, r, c)
     cell = sheet[r, c]
+    # Applique la valeur avec le bon type
     if typ == "string":
         cell.set_value(str(value))
     elif typ in ("int", "integer"):
@@ -84,51 +148,125 @@ def set_cell_value(sheet, a1: str, value, typ: str):
 
 
 def insert_rows(sheet, at: int, count: int):
+    """
+    Insère un nombre de lignes donné à une position spécifique dans la feuille.
+
+    Args:
+        sheet (ezodf.Sheet): La feuille de calcul à modifier.
+        at (int): Le numéro de la ligne (base 1) avant laquelle insérer.
+        count (int): Le nombre de lignes à insérer.
+    
+    Raises:
+        ValueError: Si l'index de ligne est inférieur à 1.
+    """
     if at < 1: raise ValueError("L'index de ligne doit être >= 1")
+    # `ezodf` utilise un index base zéro, d'où le `at - 1`
     sheet.insert_rows(at - 1, count)
 
 
 def sanitize_filename(name: str) -> str:
+    """
+    Nettoie une chaîne de caractères pour la rendre valide en tant que nom de fichier
+    en remplaçant les caractères invalides par des tirets.
+
+    Args:
+        name (str): Le nom de fichier potentiel.
+
+    Returns:
+        str: Le nom de fichier nettoyé.
+    """
     return ''.join('-' if ch in INVALID_FS_CHARS else ch for ch in name).strip()
 
 
 def bump_version_in_stem(stem: str) -> str:
+    """
+    Recherche un numéro de version (ex: "v1.2.3") dans une chaîne et l'incrémente.
+    Si "v1.2.3" est trouvé, il devient "v1.2.4". Si aucun numéro de version n'est
+    trouvé, la chaîne originale est retournée.
+
+    Args:
+        stem (str): La racine du nom de fichier (sans extension).
+
+    Returns:
+        str: La racine du nom de fichier avec le numéro de version incrémenté.
+    """
+    # Fonction interne pour gérer l'incrémentation
     def _bump(ver):
         parts = ver.split('.')
         try:
+            # Incrémente la dernière partie du numéro de version
             parts[-1] = str(int(parts[-1]) + 1)
-        except:
+        except (ValueError, IndexError):
+            # En cas d'échec (ex: "1.0a"), retourne la version telle quelle
             return ver
         return '.'.join(parts)
 
     m = VER_RE.match(stem)
-    if not m: return stem
+    if not m: return stem  # Pas de version trouvée
     pre, vchar, ver, post = m.groups()
     return f"{pre}{vchar}{_bump(ver)}{post}"
 
 
 def render_out_name(src_path: Path, name_pattern: str, suffix_tpl: str, parenthesis_replace: str = None,
                     bump_version: bool = False):
+    """
+    Génère le nom du fichier de sortie en se basant sur un modèle et plusieurs options.
+
+    Args:
+        src_path (Path): Le chemin du fichier source.
+        name_pattern (str): Le modèle pour le nom de fichier (ex: "${stem}_modifié").
+        suffix_tpl (str): Un modèle pour un suffixe à ajouter (ex: "_${date}").
+        parenthesis_replace (str, optional): Texte pour remplacer tout contenu entre parenthèses.
+        bump_version (bool, optional): Si True, incrémente la version dans le nom.
+
+    Returns:
+        str: Le nom de fichier final, nettoyé et prêt à être utilisé.
+    """
+    # Crée une chaîne de caractères de la date et l'heure actuelle (ex: "20231027-153000")
     dtstr = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     suffix = (suffix_tpl or "").replace("${date}", dtstr)
-    stem = src_path.stem
+    
+    stem = src_path.stem  # Racine du nom de fichier (ex: "document" pour "document.ods")
+    
+    # Applique les transformations optionnelles
     if parenthesis_replace: stem = re.sub(r'\([^)]*\)', f'({parenthesis_replace})', stem)
     if bump_version: stem = bump_version_in_stem(stem)
+    
+    # Remplace les placeholders dans le modèle de nom
     out = name_pattern.replace("${stem}", stem).replace("${ext}", src_path.suffix).replace("${date}", dtstr).replace(
         "${suffix}", suffix)
+    
+    # S'assure que le fichier a bien une extension .ods si non spécifiée
     if "${ext}" not in name_pattern and not out.lower().endswith(".ods"): out += ".ods"
+    
     return sanitize_filename(out)
 
 
 # --- XML STYLE ENGINE ---
+# Le style dans les fichiers ODS est géré par des fichiers XML internes (content.xml).
+# Les fonctions suivantes manipulent directement ce XML pour appliquer des styles
+# qui ne sont pas directement supportés par ezodf, comme la couleur de fond.
 
 def _build_styles_xml(style_defs, namespaces):
+    """
+    Fonction interne pour construire une liste d'éléments XML de style à partir
+    d'un dictionnaire de définitions.
+
+    Args:
+        style_defs (dict): Un dictionnaire où les clés sont des noms de style et les
+                           valeurs sont des dictionnaires de propriétés (ex: {'background': '#FF0000'}).
+        namespaces (dict): Un dictionnaire des namespaces XML requis par OpenDocument.
+
+    Returns:
+        list[ET.Element]: Une liste d'éléments XML représentant les styles.
+    """
     styles = []
     for style_name, cfg in style_defs.items():
+        # Crée l'élément <style:style> de base
         style_elem = ET.Element(f"{{{namespaces['style']}}}style", attrib={f"{{{namespaces['style']}}}name": style_name,
                                                                            f"{{{namespaces['style']}}}family": 'table-cell'})
 
-        # Propriétés de cellule (Fond, Bordures)
+        # Propriétés de la cellule (Fond, Alignement Vertical)
         if cfg.get('background') or cfg.get('valign'):
             tcp = ET.SubElement(style_elem, f"{{{namespaces['style']}}}table-cell-properties")
             if cfg.get('background'):
@@ -162,31 +300,63 @@ def _build_styles_xml(style_defs, namespaces):
 
 
 def apply_styles_via_xml(ods_path: str, style_defs: dict):
+    """
+    Applique des styles de cellule à un fichier ODS en manipulant directement
+    son contenu XML. C'est la méthode principale pour ajouter des styles
+    non supportés nativement par ezodf.
+
+    Le processus est le suivant :
+    1. Décompresse le fichier .ods dans un répertoire temporaire.
+    2. Parse le fichier 'content.xml' qui contient les données et les styles.
+    3. Génère les nouveaux éléments XML de style.
+    4. Insère ces éléments dans la section <office:automatic-styles> du XML.
+    5. Réécrit le 'content.xml' modifié.
+    6. Recompresse les fichiers pour recréer le fichier .ods.
+
+    Args:
+        ods_path (str): Le chemin vers le fichier .ods à modifier.
+        style_defs (dict): Le dictionnaire de définitions de style à appliquer.
+    """
     if not style_defs: return
+    # Définition des namespaces XML utilisés dans les fichiers ODS
     namespaces = {'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
                   'style': 'urn:oasis:names:tc:opendocument:xmlns:style:1.0',
                   'fo': 'urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0',
                   'table': 'urn:oasis:names:tc:opendocument:xmlns:table:1.0'}
     for p, u in namespaces.items(): ET.register_namespace(p, u)
+    
     try:
+        # Utilise un répertoire temporaire pour extraire les fichiers de l'archive
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
             with zipfile.ZipFile(ods_path, 'r') as z:
                 z.extractall(tmpdir)
+            
             cxml = tmpdir / 'content.xml'
             if not cxml.exists(): return
+            
+            # Parse le fichier XML principal
             tree = ET.parse(cxml)
             root = tree.getroot()
+            
+            # Construit les nouveaux styles XML
             styles_xml = _build_styles_xml(style_defs, namespaces)
-            auto_styles = root.find('.//{urn:oasis:names:tc:opendocument:xmlns:office:1.0}automatic-styles')
-            if auto_styles is None: auto_styles = ET.SubElement(root, f"{{{namespaces['office']}}}automatic-styles")
+            
+            # Trouve le conteneur de styles automatiques et y ajoute les nouveaux styles
+            auto_styles = root.find('.//office:automatic-styles', namespaces)
+            if auto_styles is None: 
+                auto_styles = ET.SubElement(root, f"{{{namespaces['office']}}}automatic-styles")
             for se in styles_xml: auto_styles.append(se)
+            
+            # Sauvegarde l'arbre XML modifié
             tree.write(cxml, encoding='utf-8', xml_declaration=True)
-            with open(cxml, 'r', encoding='utf-8') as f:
-                content = f.read()
+
+            # Petite correction pour s'assurer que la déclaration XML est présente
+            with open(cxml, 'r', encoding='utf-8') as f: content = f.read()
             if not content.startswith('<?xml'): content = '<?xml version="1.0" encoding="UTF-8"?>\n' + content
-            with open(cxml, 'w', encoding='utf-8') as f:
-                f.write(content)
+            with open(cxml, 'w', encoding='utf-8') as f: f.write(content)
+            
+            # Reconstruit l'archive ODS avec le fichier modifié
             with zipfile.ZipFile(ods_path, 'w', zipfile.ZIP_DEFLATED) as zo:
                 for fp in tmpdir.rglob('*'):
                     if fp.is_file(): zo.write(fp, fp.relative_to(tmpdir))
@@ -197,7 +367,26 @@ def apply_styles_via_xml(ods_path: str, style_defs: dict):
 def restore_colors_preserve_formatting_xml(ods_path, sheet_name, start_row, end_row, column_colors, exclude_rows=None,
                                            protected_prefix=None):
     """
-    Fonction Clé : Nettoie les couleurs (gris/bleu) MAIS protège les styles commençant par 'protected_prefix' (ex: Run_123_)
+    Fonction clé pour réinitialiser les couleurs de fond d'une plage de cellules
+    tout en préservant le formatage existant (gras, bordures, etc.).
+
+    Cette fonction est essentielle car elle permet de "nettoyer" un fichier avant
+    d'appliquer de nouvelles modifications, sans pour autant perdre le formatage
+    précédent. Elle peut également protéger les styles ajoutés lors de la même
+    exécution grâce à un préfixe unique.
+
+    Args:
+        ods_path (str): Chemin du fichier ODS.
+        sheet_name (str): Nom de la feuille à traiter.
+        start_row (int): Ligne de début (base zéro) pour la recoloration.
+        end_row (int or None): Ligne de fin (base zéro). Si None, va jusqu'à la fin.
+        column_colors (dict): Dictionnaire mappant un index de colonne (int) à une
+                              couleur de fond (ex: {0: '#C0C0C0', 1: '#CCFFFF'}).
+        exclude_rows (list[int], optional): Liste d'index de lignes (base zéro) à ignorer.
+        protected_prefix (str, optional): Un préfixe de style (ex: "Run_123_"). Tout style
+                                          dont le nom commence par ce préfixe sera ignoré
+                                          par le nettoyage, protégeant ainsi les modifications
+                                          faites dans la session courante.
     """
     if exclude_rows is None: exclude_rows = []
     namespaces = {'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
@@ -206,84 +395,112 @@ def restore_colors_preserve_formatting_xml(ods_path, sheet_name, start_row, end_
                   'table': 'urn:oasis:names:tc:opendocument:xmlns:table:1.0',
                   'text': 'urn:oasis:names:tc:opendocument:xmlns:text:1.0'}
     for p, u in namespaces.items(): ET.register_namespace(p, u)
+    
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
-            with zipfile.ZipFile(ods_path, 'r') as z:
-                z.extractall(tmpdir)
+            with zipfile.ZipFile(ods_path, 'r') as z: z.extractall(tmpdir)
+            
             cxml = tmpdir / 'content.xml'
             if not cxml.exists(): return
+            
             tree = ET.parse(cxml)
             root = tree.getroot()
-            body = root.find('.//{urn:oasis:names:tc:opendocument:xmlns:office:1.0}body')
-            spreadsheet = body.find('.//{urn:oasis:names:tc:opendocument:xmlns:office:1.0}spreadsheet')
+            
+            # Recherche de la feuille de calcul cible par son nom
+            spreadsheet = root.find('.//office:spreadsheet', namespaces)
             target_sheet = None
-            for tbl in spreadsheet.findall(f".//{{{namespaces['table']}}}table"):
+            for tbl in spreadsheet.findall('.//table:table', namespaces):
                 if tbl.get(f"{{{namespaces['table']}}}name") == sheet_name:
-                    target_sheet = tbl;
+                    target_sheet = tbl
                     break
             if not target_sheet: return
-            auto_styles = root.find('.//{urn:oasis:names:tc:opendocument:xmlns:office:1.0}automatic-styles')
+
+            auto_styles = root.find('.//office:automatic-styles', namespaces)
             if auto_styles is None: auto_styles = ET.SubElement(root, f"{{{namespaces['office']}}}automatic-styles")
-            style_mapping = {}
+            
+            style_mapping = {}  # Cache pour éviter de recréer des styles identiques
             new_style_counter = 1
-            rows = target_sheet.findall(f".//{{{namespaces['table']}}}table-row")
+            
+            rows = target_sheet.findall('.//table:table-row', namespaces)
             for r_idx, r_elem in enumerate(rows):
+                # Filtre les lignes en dehors de la plage spécifiée
                 if r_idx < start_row: continue
                 if end_row is not None and r_idx > end_row: break
                 if r_idx in exclude_rows: continue
+                
                 curr_col = 0
                 for cell in list(r_elem):
                     tag = cell.tag.split('}')[-1]
+                    # Gère les colonnes répétées (cellules vides qui suivent une cellule non vide)
                     rep = int(cell.get(f"{{{namespaces['table']}}}number-columns-repeated") or 1)
-                    if 'covered' in tag: curr_col += rep; continue
+                    
+                    if 'covered' in tag: # Cellule couverte par un 'span'
+                        curr_col += rep
+                        continue
+                    
                     if 'table-cell' in tag:
                         current_style_name = cell.get(f"{{{namespaces['table']}}}style-name")
 
                         # --- PROTECTION DES NOUVEAUX STYLES ---
-                        # Si le style appartient à la session actuelle, on le garde (ex: Rouge qu'on vient de mettre)
+                        # Si le style a été ajouté pendant cette session, on l'ignore.
                         if protected_prefix and current_style_name and current_style_name.startswith(protected_prefix):
-                            curr_col += rep;
+                            curr_col += rep
                             continue
 
+                        # Applique la nouvelle couleur de fond si définie pour cette colonne
                         tcolor = column_colors.get(curr_col)
                         if tcolor:
+                            # Clé unique pour le style : (style_original, nouvelle_couleur)
                             key = (current_style_name or "Default", tcolor)
+                            
+                            # Si on n'a pas encore créé de style combiné, on le fait maintenant
                             if key not in style_mapping:
-                                n_name = f"RestoreColor{new_style_counter}";
+                                n_name = f"RestoreColor{new_style_counter}"
                                 new_style_counter += 1
+                                
+                                # Crée un nouvel élément de style
                                 n_style = ET.Element(f"{{{namespaces['style']}}}style",
                                                      attrib={f"{{{namespaces['style']}}}name": n_name,
                                                              f"{{{namespaces['style']}}}family": 'table-cell'})
+                                
+                                # Copie toutes les propriétés de l'ancien style, SAUF la couleur de fond
                                 tcp_created = False
                                 if current_style_name:
-                                    ex_style = auto_styles.find(
-                                        f".//{{{namespaces['style']}}}style[@{{{namespaces['style']}}}name='{current_style_name}']")
+                                    ex_style = auto_styles.find(f".//style:style[@style:name='{current_style_name}']", namespaces)
                                     if ex_style is not None:
                                         for ch in ex_style:
+                                            # Copie les propriétés de la cellule
                                             if ch.tag == f"{{{namespaces['style']}}}table-cell-properties":
-                                                tcp = ET.SubElement(n_style,
-                                                                    f"{{{namespaces['style']}}}table-cell-properties")
+                                                tcp = ET.SubElement(n_style, ch.tag)
                                                 tcp_created = True
                                                 for k, v in ch.attrib.items():
                                                     if 'background-color' not in k: tcp.set(k, v)
                                                 tcp.set(f"{{{namespaces['fo']}}}background-color", tcolor)
                                             else:
+                                                # Copie les autres propriétés (texte, paragraphe)
                                                 n_style.append(copy.deepcopy(ch))
+                                
+                                # Si aucune propriété n'existait, on en crée une nouvelle
                                 if not tcp_created:
                                     tcp = ET.SubElement(n_style, f"{{{namespaces['style']}}}table-cell-properties")
                                     tcp.set(f"{{{namespaces['fo']}}}background-color", tcolor)
-                                    tcp.set(f"{{{namespaces['fo']}}}border", '0.05pt solid #000000')
+                                    tcp.set(f"{{{namespaces['fo']}}}border", '0.05pt solid #000000') # Bordure par défaut
+                                
                                 auto_styles.append(n_style)
                                 style_mapping[key] = n_name
+                            
+                            # Applique le nouveau nom de style (ou le style recyclé) à la cellule
                             cell.set(f"{{{namespaces['table']}}}style-name", style_mapping[key])
+                    
                     curr_col += rep
+            
+            # Sauvegarde et recréation de l'archive ODS
             tree.write(cxml, encoding='utf-8', xml_declaration=True)
-            with open(cxml, 'r', encoding='utf-8') as f:
-                content = f.read()
+            with open(cxml, 'r', encoding='utf-8') as f: content = f.read()
             if not content.startswith('<?xml'): content = '<?xml version="1.0" encoding="UTF-8"?>\n' + content
-            with open(cxml, 'w', encoding='utf-8') as f:
-                f.write(content)
+            with open(cxml, 'w', encoding='utf-8') as f: f.write(content)
+            
             with zipfile.ZipFile(ods_path, 'w', zipfile.ZIP_DEFLATED) as zo:
                 for fp in tmpdir.rglob('*'):
                     if fp.is_file(): zo.write(fp, fp.relative_to(tmpdir))
@@ -292,14 +509,37 @@ def restore_colors_preserve_formatting_xml(ods_path, sheet_name, start_row, end_
 
 
 def process_file(src_path: Path, out_dir: Path, suffix_tpl: str, name_pattern: str, ops: list, options: dict):
-    doc = ezodf.opendoc(str(src_path))
-    style_cache, style_defs = {}, {}
-    ct_restore = None
+    """
+    Fonction principale du backend qui traite un seul fichier ODS.
 
-    # 1. Génération d'une signature unique pour cette exécution (ex: Run_17320055_)
-    # Cela permet de protéger les ajouts de CE lancement contre le nettoyage
+    Elle ouvre le document, applique une série d'opérations (définies dans `ops`),
+    gère la réinitialisation des couleurs, génère le nom du fichier de sortie,
+    sauvegarde le fichier modifié, puis applique les nouveaux styles XML.
+
+    Args:
+        src_path (Path): Chemin du fichier ODS source.
+        out_dir (Path): Répertoire où sauvegarder le fichier modifié.
+        suffix_tpl (str): Modèle pour le suffixe du nom de fichier.
+        name_pattern (str): Modèle principal pour le nom de fichier.
+        ops (list[dict]): Liste des opérations à effectuer. Chaque opération est un
+                          dictionnaire (ex: {'op': 'set_value', 'sheet': 'Feuille1', ...}).
+        options (dict): Dictionnaire d'options globales (ex: 'bump_version', 'reset_colors_before').
+
+    Returns:
+        str: Un message indiquant le succès ou l'échec de l'opération, incluant
+             le nom du fichier généré.
+    """
+    doc = ezodf.opendoc(str(src_path))
+    style_cache, style_defs = {}, {}  # Cache et définitions pour les nouveaux styles
+    ct_restore = None  # Paramètres pour la restauration des couleurs
+
+    # 1. Génère un préfixe unique pour cette session. Tous les styles créés
+    #    pendant cette exécution commenceront par ce préfixe (ex: "Run_167..._").
+    #    Cela permet à `restore_colors_preserve_formatting_xml` de ne pas effacer
+    #    les couleurs que l'on vient juste d'ajouter.
     session_prefix = f"Run_{int(dt.datetime.now().timestamp())}_"
 
+    # 2. Prépare la configuration pour la réinitialisation des couleurs si l'option est activée.
     if options.get("reset_colors_before", False):
         col_cols = options.get("column_colors") or {0: "#C0C0C0", 1: "#CCFFFF", 2: "#CCFFFF", 3: "#CCFFCC",
                                                     4: "#CCFFCC", 5: "#FFFFCC", 6: "#FFFFCC", 7: "#FFFFCC",
@@ -312,6 +552,7 @@ def process_file(src_path: Path, out_dir: Path, suffix_tpl: str, name_pattern: s
             'exclude_rows': options.get("exclude_rows", [])
         }
 
+    # 3. Boucle principale : applique chaque opération séquentiellement.
     for op in ops:
         kind = op.get("op")
 
@@ -417,18 +658,21 @@ def process_file(src_path: Path, out_dir: Path, suffix_tpl: str, name_pattern: s
                 ensure_size(sheet, r, c)
                 sheet[r, c].style_name = sn
 
+    # 4. Génère le nom du fichier de sortie et sauvegarde le document initialement.
+    #    Les manipulations XML (couleurs, styles) se feront sur cette copie sauvegardée.
     out_name = render_out_name(src_path, name_pattern, suffix_tpl, options.get("parenthesis_replace"),
                                options.get("bump_version", False))
     out_path = out_dir / out_name
     if options.get("dry_run"): return f"[SIMULATION] {out_path.name}"
     doc.saveas(str(out_path))
 
-    # Nettoyage et Restauration
+    # 5. Étape de post-traitement XML.
+    # Applique la restauration des couleurs (si activée).
+    # Le `protected_prefix` garantit que les styles ajoutés à l'étape 3 ne sont pas effacés.
     if ct_restore:
         sn_list = ct_restore['sheet_names']
         target_sheets = sn_list if sn_list else [s.name for s in doc.sheets]
         for sname in target_sheets:
-            # On passe session_prefix pour protéger UNIQUEMENT ce qu'on vient de faire
             restore_colors_preserve_formatting_xml(
                 str(out_path),
                 sname,
@@ -439,16 +683,30 @@ def process_file(src_path: Path, out_dir: Path, suffix_tpl: str, name_pattern: s
                 protected_prefix=session_prefix
             )
 
+    # Applique tous les nouveaux styles (couleurs, gras, etc.) qui ont été définis.
     if style_defs: apply_styles_via_xml(str(out_path), style_defs)
+    
     return f"Succès: {out_path.name}"
 
 
 # ==============================================================================
 # 2. INTERFACE GRAPHIQUE (GUI)
 # ==============================================================================
+# Cette section définit l'interface utilisateur de l'application en utilisant PySide6.
 
 class ColorConfigDialog(QDialog):
+    """
+    Boîte de dialogue modale pour configurer les couleurs de fond à appliquer
+    lors de la réinitialisation des couleurs.
+    """
     def __init__(self, current_text, parent=None):
+        """
+        Initialise la boîte de dialogue.
+
+        Args:
+            current_text (str): Le texte de configuration actuel à afficher.
+            parent (QWidget, optional): Le widget parent.
+        """
         super().__init__(parent)
         self.setWindowTitle("Configuration des Couleurs")
         self.resize(400, 500)
@@ -465,23 +723,41 @@ class ColorConfigDialog(QDialog):
         layout.addWidget(btn_box)
 
     def get_text(self):
+        """
+        Retourne le texte contenu dans la zone d'édition.
+
+        Returns:
+            str: La configuration des couleurs entrée par l'utilisateur.
+        """
         return self.text_edit.toPlainText()
 
 
 class ModernODSApp(QMainWindow):
+    """
+    Fenêtre principale de l'application.
+    Structure et gère tous les widgets de l'interface graphique et connecte
+    les actions de l'utilisateur à la logique métier (backend).
+    """
     def __init__(self):
+        """
+        Initialise la fenêtre principale, configure ses propriétés,
+        et appelle les méthodes pour construire les différentes sections de l'UI.
+        """
         super().__init__()
         self.setWindowTitle("Assistant Matrices ODS - Ultimate V9")
         self.resize(1300, 850)
 
-        self.files = []
-        self.output_dir = str(Path.cwd() / "Resultats")
-        self._grids = {}
+        # --- Initialisation de l'état de l'application ---
+        self.files = []  # Liste des chemins des fichiers à traiter
+        self.output_dir = str(Path.cwd() / "Resultats")  # Dossier de sortie par défaut
+        self._grids = {} # (Non utilisé actuellement, peut être retiré)
+        # Configuration par défaut des couleurs pour la réinitialisation
         self.custom_colors_txt = "\n".join([
             "A=#C0C0C0", "B=#CCFFFF", "C=#CCFFFF", "D=#CCFFCC", "E=#CCFFCC",
             "F=#FFFFCC", "G=#FFFFCC", "H=#FFFFCC", "I=#FFFFFF", "J=#FFFFCC", "K=#FFFFCC"
         ])
 
+        # --- Construction de l'interface ---
         self.setup_menu_bar()
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -493,6 +769,7 @@ class ModernODSApp(QMainWindow):
         self.setup_run_section()
 
     def setup_menu_bar(self):
+        """Crée la barre de menu supérieure avec les options Fichier > Sauvegarder/Charger."""
         menubar = self.menuBar()
         file_menu = menubar.addMenu("Fichier")
         act_save = QAction("Sauvegarder Configuration...", self)
@@ -503,6 +780,7 @@ class ModernODSApp(QMainWindow):
         file_menu.addAction(act_load)
 
     def setup_file_section(self):
+        """Crée la section de l'interface pour la sélection des fichiers ODS."""
         group = QGroupBox("1. Sélection des Fichiers")
         layout = QHBoxLayout()
         self.file_list = QListWidget()
@@ -524,10 +802,12 @@ class ModernODSApp(QMainWindow):
         self.main_layout.addWidget(group)
 
     def setup_options_section(self):
+        """Crée la section des options globales (dossier de sortie, versioning, couleurs)."""
         group = QGroupBox("2. Configuration Globale")
         layout = QHBoxLayout()
+        
+        # --- Colonne de Gauche : Options de sortie ---
         l_left = QVBoxLayout()
-
         h1 = QHBoxLayout()
         self.chk_src_dir = QCheckBox("Sauvegarder dans le dossier source")
         self.chk_src_dir.toggled.connect(self.toggle_out_ui)
@@ -549,22 +829,21 @@ class ModernODSApp(QMainWindow):
         l_left.addWidget(self.lbl_out);
         l_left.addLayout(h2)
 
+        # --- Colonne de Droite : Options de réinitialisation des couleurs ---
         l_right = QVBoxLayout()
         h3 = QHBoxLayout()
         self.chk_reset = QCheckBox("Réinitialiser Couleurs")
-        self.chk_reset.setChecked(True)  # Activé par défaut
+        self.chk_reset.setChecked(True)
         self.btn_colors = QPushButton("Config Couleurs...")
         self.btn_colors.clicked.connect(self.config_colors_dialog)
         h3.addWidget(self.chk_reset);
         h3.addWidget(self.btn_colors)
+        
         h4 = QHBoxLayout()
         self.input_reset_sheets = QLineEdit();
         self.input_reset_sheets.setPlaceholderText("Feuilles (vide=toutes)")
-
-        # --- FIX: DEFAUT 10 ---
         self.input_reset_start = QLineEdit("10");
         self.input_reset_start.setPlaceholderText("Ligne Début")
-
         self.input_reset_excl = QLineEdit();
         self.input_reset_excl.setPlaceholderText("Exclure (ex: 15,20)")
         h4.addWidget(QLabel("Cible:"));
@@ -583,6 +862,7 @@ class ModernODSApp(QMainWindow):
         self.main_layout.addWidget(group)
 
     def setup_tabs_section(self):
+        """Crée le widget à onglets et initialise chaque onglet d'opérations."""
         self.tabs = QTabWidget()
         self.tab_content = QWidget();
         self.tab_struct = QWidget();
@@ -592,6 +872,8 @@ class ModernODSApp(QMainWindow):
         self.tabs.addTab(self.tab_struct, "Structure")
         self.tabs.addTab(self.tab_style, "Mise en Forme");
         self.tabs.addTab(self.tab_copy, "Copie / Transfert")
+        
+        # Appelle les méthodes de construction pour chaque onglet
         self._setup_content_tab();
         self._setup_struct_tab();
         self._setup_style_tab();
@@ -599,11 +881,13 @@ class ModernODSApp(QMainWindow):
         self.main_layout.addWidget(self.tabs)
 
     def delete_row(self, tree_widget):
+        """Supprime la ou les lignes sélectionnées d'un QTreeWidget."""
         root = tree_widget.invisibleRootItem()
         for item in tree_widget.selectedItems():
             root.removeChild(item)
 
     def _setup_content_tab(self):
+        """Construit l'interface de l'onglet 'Édition Contenu'."""
         layout = QVBoxLayout(self.tab_content)
         form = QHBoxLayout()
         self.c_sheet = QLineEdit();
@@ -641,13 +925,14 @@ class ModernODSApp(QMainWindow):
 
         btn_del = QPushButton("Supprimer la ligne")
         btn_del.setProperty('class', 'danger')
-        btn_del.clicked.connect(lambda: self.delete_row(self.tree_content))  # ou tree_cont
+        btn_del.clicked.connect(lambda: self.delete_row(self.tree_cont))
 
         btn_box.addWidget(btn_edit)
         btn_box.addWidget(btn_del)
         layout.addLayout(btn_box)
 
     def _setup_struct_tab(self):
+        """Construit l'interface de l'onglet 'Structure' (insertion, fusion)."""
         layout = QVBoxLayout(self.tab_struct)
 
         # Aide visuelle
@@ -721,6 +1006,7 @@ class ModernODSApp(QMainWindow):
         layout.addLayout(btn_box)
 
     def _setup_style_tab(self):
+        """Construit l'interface de l'onglet 'Mise en Forme'."""
         layout = QVBoxLayout(self.tab_style)
         r1 = QHBoxLayout()
         self.y_sheet = QLineEdit();
@@ -788,6 +1074,7 @@ class ModernODSApp(QMainWindow):
         layout.addLayout(btn_box)
 
     def _setup_copy_tab(self):
+        """Construit l'interface de l'onglet 'Copie / Transfert'."""
         layout = QVBoxLayout(self.tab_copy)
         r1 = QHBoxLayout()
         self.cp_src_s = QLineEdit();
@@ -827,6 +1114,7 @@ class ModernODSApp(QMainWindow):
         layout.addLayout(btn_box)
 
     def setup_run_section(self):
+        """Crée la section finale avec la barre de progression et le bouton d'exécution."""
         layout = QVBoxLayout()
         self.progress = QProgressBar();
         self.progress.setValue(0);
@@ -842,7 +1130,11 @@ class ModernODSApp(QMainWindow):
     # --- FONCTIONS DE MODIFICATION (EDIT) ---
 
     def edit_struct_row(self):
-        """Charge la ligne Structure sélectionnée dans le formulaire"""
+        """
+        Charge les données de la ligne sélectionnée dans l'onglet 'Structure'
+        dans les champs du formulaire pour permettre à l'utilisateur de la modifier.
+        La ligne originale est supprimée pour éviter les doublons lors du nouvel ajout.
+        """
         item = self.tree_struct.currentItem()
         if not item:
             QMessageBox.warning(self, "Sélection", "Veuillez sélectionner une ligne à modifier.")
@@ -878,8 +1170,11 @@ class ModernODSApp(QMainWindow):
         self.delete_row(self.tree_struct)
 
     def edit_content_row(self):
-        """Charge la ligne Contenu sélectionnée"""
-        item = self.tree_cont.currentItem()  # Attention : Vérifiez le nom de votre variable tree (tree_cont ou tree_content)
+        """
+        Charge les données de la ligne sélectionnée dans l'onglet 'Contenu'
+        dans les champs du formulaire. Gère les cas "Valeur" simple et "Grille".
+        """
+        item = self.tree_cont.currentItem()
         if not item:
             QMessageBox.warning(self, "Sélection", "Veuillez sélectionner une ligne.")
             return
@@ -906,7 +1201,10 @@ class ModernODSApp(QMainWindow):
         self.delete_row(self.tree_cont)
 
     def edit_style_row(self):
-        """Charge la ligne Style sélectionnée"""
+        """
+        Charge les données de la ligne sélectionnée dans l'onglet 'Mise en Forme'
+        dans les champs du formulaire.
+        """
         item = self.tree_style.currentItem()
         if not item: return
 
@@ -915,15 +1213,13 @@ class ModernODSApp(QMainWindow):
         self.y_sheet.setText(sh)
         self.y_cells.setText(cells)
 
-        # Analyse du texte de description pour recocher les cases
+        # Analyse de la chaîne de description pour re-configurer l'UI
         self.y_bold.setChecked("Gras" in desc)
         self.y_wrap.setChecked("Wrap" in desc)
 
-        # Récupération Taille (Sz:12)
         m_sz = re.search(r"Sz:(\d+)", desc)
         self.y_size.setText(m_sz.group(1)) if m_sz else self.y_size.clear()
 
-        # Récupération Fond (Bg:#FFF)
         m_bg = re.search(r"Bg:(#[0-9A-Fa-f]+)", desc)
         if m_bg:
             idx = self.y_bg.findData(m_bg.group(1))
@@ -931,7 +1227,6 @@ class ModernODSApp(QMainWindow):
         else:
             self.y_bg.setCurrentIndex(0)
 
-        # Récupération Alignements
         self.y_halign.setCurrentIndex(0)
         self.y_valign.setCurrentIndex(0)
         for val in ["left", "center", "right"]:
@@ -942,7 +1237,10 @@ class ModernODSApp(QMainWindow):
         self.delete_row(self.tree_style)
 
     def edit_copy_row(self):
-        """Charge la ligne Copie sélectionnée"""
+        """
+        Charge les données de la ligne sélectionnée dans l'onglet 'Copie / Transfert'
+        dans les champs du formulaire.
+        """
         item = self.tree_copy.currentItem()
         if not item: return
 
@@ -957,45 +1255,60 @@ class ModernODSApp(QMainWindow):
         self.delete_row(self.tree_copy)
 
     # --- ACTIONS GUI ---
+    # Ces méthodes sont directement connectées aux signaux des widgets (ex: clics de bouton).
+
     def add_files(self):
+        """Ouvre une boîte de dialogue pour sélectionner des fichiers ODS et les ajoute à la liste."""
         files, _ = QFileDialog.getOpenFileNames(self, "Choisir fichiers", "", "ODS Files (*.ods)")
         if files:
             for f in files:
                 if f not in self.files: self.files.append(f); self.file_list.addItem(Path(f).name)
 
     def add_folder(self):
+        """Ouvre une boîte de dialogue pour sélectionner un dossier et y ajoute tous les fichiers ODS."""
         d = QFileDialog.getExistingDirectory(self, "Choisir dossier")
         if d:
             for f in glob.glob(str(Path(d) / "*.ods")):
                 if f not in self.files: self.files.append(f); self.file_list.addItem(Path(f).name)
 
     def clear_files(self):
+        """Vide la liste des fichiers à traiter."""
         self.files = []; self.file_list.clear()
 
     def toggle_out_ui(self, checked):
+        """
+        Active ou désactive le bouton de sélection du dossier de sortie en fonction de
+        l'état de la case "Sauvegarder dans le dossier source".
+        """
         self.btn_out.setEnabled(not checked)
         self.lbl_out.setText("Vers: [Dossier Source de chaque fichier]" if checked else f"Vers: {self.output_dir}")
 
     def choose_out_dir(self):
+        """Ouvre une boîte de dialogue pour choisir le dossier de sortie personnalisé."""
         d = QFileDialog.getExistingDirectory(self, "Dossier de sortie")
         if d: self.output_dir = d; self.lbl_out.setText(f"Vers: {d}")
 
     def config_colors_dialog(self):
+        """Ouvre la boîte de dialogue de configuration des couleurs."""
         dlg = ColorConfigDialog(self.custom_colors_txt, self)
         if dlg.exec(): self.custom_colors_txt = dlg.get_text()
 
     def add_content_val(self):
+        """Ajoute une opération 'set_value' ou 'fill_range' à l'arbre de contenu."""
         s, r, t, v = self.c_sheet.text(), self.c_range.text(), self.c_type.currentText(), self.c_val.text()
         if s and r: QTreeWidgetItem(self.tree_cont, ["Valeur", s, r, f"{t}: {v}"])
 
     def add_content_grid(self):
+        """Ajoute une opération 'paste_grid' à l'arbre de contenu."""
         s, r, txt = self.c_sheet.text(), self.c_range.text(), self.c_grid_txt.toPlainText().strip()
         if s and r and txt:
             item = QTreeWidgetItem(self.tree_cont, ["Grille", s, r, f"{len(txt.splitlines())} lignes"])
+            # Stocke le texte brut de la grille dans l'item lui-même pour une utilisation ultérieure
             item.setData(0, Qt.UserRole, txt);
             self.c_grid_txt.clear()
 
     def add_struct_action(self):
+        """Ajoute une opération de structure (insérer, fusionner, effacer) à l'arbre."""
         # 1. Récupération des données
         act = self.s_action.currentText()
         sh = self.s_sheet.text()
@@ -1012,11 +1325,8 @@ class ModernODSApp(QMainWindow):
             QMessageBox.warning(self, "Erreur", "Pour insérer, la Cible doit être un numéro de ligne.")
             return
 
-        # ==============================================================================
-        # DEBUT : AJOUT DE VOTRE POP-UP
-        # ==============================================================================
-
-        # Définissez ici votre message (vous pouvez utiliser les variables sh, count, target)
+        # Affiche une boîte de dialogue de confirmation/avertissement personnalisée.
+        # Ce bloc est spécifique à un besoin utilisateur et peut être modifié ou retiré.
         mon_titre = "Confirmation d'ajout"
         mon_message = f"ATTENTION AMEL SI TU INSERE UNE LIGNE PENSE A LE FAIRE SUR TOUTES LES MATRICES POUR NE PAS TOUT CASSER"
 
@@ -1043,30 +1353,39 @@ class ModernODSApp(QMainWindow):
         self.s_count.clear()
 
     def add_style_action(self):
+        """Ajoute une opération de style à l'arbre."""
         s, c = self.y_sheet.text(), self.y_cells.text()
         if s and c:
             desc = []
             if self.y_bold.isChecked(): desc.append("Gras")
             if self.y_size.text(): desc.append(f"Sz:{self.y_size.text()}")
 
-            # MODIF ICI : On récupère le code hexa
-            bg_code = self.y_bg.currentData()
+            bg_code = self.y_bg.currentData()  # Récupère le code hex (ex: #FF0000)
             if bg_code: desc.append(f"Bg:{bg_code}")
 
             if self.y_halign.currentText(): desc.append(self.y_halign.currentText())
             if self.y_valign.currentText(): desc.append(self.y_valign.currentText())
+            if self.y_wrap.isChecked(): desc.append("Wrap")
 
             QTreeWidgetItem(self.tree_style, [s, c, ", ".join(desc)])
 
     def add_copy_action(self):
+        """Ajoute une opération de copie de plage à l'arbre."""
         ss, sr, ds, dt = self.cp_src_s.text(), self.cp_src_r.text(), self.cp_dst_s.text(), self.cp_dst_tl.text()
         if ss and sr and dt: QTreeWidgetItem(self.tree_copy,
                                              [ss, sr, ds if ds else "idem", dt, str(self.cp_trans.isChecked())])
 
     # --- SAVE / LOAD ---
+    
     def save_profile(self):
+        """
+        Sauvegarde la configuration actuelle (options globales et listes d'actions)
+        dans un fichier JSON.
+        """
         path, _ = QFileDialog.getSaveFileName(self, "Sauver Config", "", "JSON (*.json)")
         if not path: return
+        
+        # 1. Collecte toutes les options de l'interface
         data = {
             "options": {
                 "out_dir": self.output_dir, "src_dir": self.chk_src_dir.isChecked(),
@@ -1101,11 +1420,17 @@ class ModernODSApp(QMainWindow):
             QMessageBox.critical(self, "Erreur", str(e))
 
     def load_profile(self):
+        """
+        Charge une configuration depuis un fichier JSON et restaure l'état complet
+        de l'interface utilisateur.
+        """
         path, _ = QFileDialog.getOpenFileName(self, "Charger Config", "", "JSON (*.json)")
         if not path: return
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            
+            # 1. Restaure les options globales
             opts = data.get("options", {})
             if "out_dir" in opts: self.output_dir = opts["out_dir"]; self.lbl_out.setText(f"Vers: {self.output_dir}")
             self.chk_src_dir.setChecked(opts.get("src_dir", False))
@@ -1117,6 +1442,7 @@ class ModernODSApp(QMainWindow):
             self.input_reset_excl.setText(opts.get("rst_excl", ""))
             self.custom_colors_txt = opts.get("colors_txt", self.custom_colors_txt)
 
+            # 2. Vide les arbres actuels et les repeuple avec les données chargées
             self.tree_cont.clear();
             self.tree_struct.clear();
             self.tree_style.clear();
@@ -1132,9 +1458,23 @@ class ModernODSApp(QMainWindow):
             QMessageBox.critical(self, "Erreur", str(e))
 
     def run_batch(self):
+        """
+        La méthode principale qui exécute le traitement par lots.
+        
+        Elle effectue les étapes suivantes :
+        1. Vérifie si des fichiers ont été sélectionnés.
+        2. Itère sur chaque arbre d'actions (structure, contenu, etc.).
+        3. Traduit les informations de chaque ligne de l'arbre en un dictionnaire d'opération
+           compréhensible par la fonction `process_file`.
+        4. Rassemble toutes les options globales de l'interface.
+        5. Appelle `process_file` pour chaque fichier de la liste.
+        6. Met à jour la barre de progression.
+        """
         if not self.files:
             QMessageBox.warning(self, "Erreur", "Aucun fichier sélectionné.")
             return
+        
+        # `ops` contiendra la liste séquentielle de toutes les opérations à effectuer.
         ops = []
 
         # 1. STRUCT
@@ -1212,30 +1552,39 @@ class ModernODSApp(QMainWindow):
                     cc[idx] = v if v else None
         if cc: opts["column_colors"] = cc
 
+        # 5. Boucle principale de traitement des fichiers
         self.progress.setMaximum(len(self.files));
         self.progress.setValue(0)
         for i, f in enumerate(self.files):
             try:
-                # GESTION DOSSIER SOURCE VS OUTPUT DIR
+                # Détermine le dossier de sortie pour le fichier actuel
                 if self.chk_src_dir.isChecked():
                     base = Path(f).parent
                 else:
                     base = Path(self.output_dir)
                     if not base.exists(): base.mkdir(parents=True)
 
+                # Appel de la fonction backend pour traiter le fichier
                 process_file(Path(f), base, "", "${stem}${suffix}${ext}", ops, opts)
+                
+                # Mise à jour de l'interface
                 self.progress.setValue(i + 1);
-                QApplication.processEvents()
+                QApplication.processEvents() # Permet à l'UI de rester réactive
             except Exception as e:
-                print(e)
+                print(e) # Affiche l'erreur dans la console pour le débogage
+        
         QMessageBox.information(self, "Terminé", "Traitement terminé !")
 
 
 if __name__ == "__main__":
+    """
+    Point d'entrée de l'application.
+    Initialise l'application Qt, applique un thème, crée et affiche la fenêtre principale.
+    """
     app = QApplication.instance()
     if not app: app = QApplication(sys.argv)
 
-    # 1. On applique le thème
+    # 1. Applique le thème "dark_teal" à toute l'application
     apply_stylesheet(app, theme='dark_teal.xml')
 
     # 2. PATCH CSS : On force la couleur des placeholders en gris clair
