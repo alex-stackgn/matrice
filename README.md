@@ -1,92 +1,379 @@
-# Projet matrice
-
-Projet d'un utilitaire python afin de traiter des fichier .ods en masse
-
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://omnibus-pic.gendarmerie.fr/alexandre.perreard/projet-matrice.git
-git branch -M main
-git push -uf origin main
-```
-
-## Integrate with your tools
-
-- [ ] [Set up project integrations](https://omnibus-pic.gendarmerie.fr/alexandre.perreard/projet-matrice/-/settings/integrations)
-
-## Collaborate with your team
-
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Automatically merge when pipeline succeeds](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing(SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thank you to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
+# Traitement de Matrices ODS
 
 ## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Application graphique permettant de traiter par lots des fichiers ODS (LibreOffice Calc). Elle offre une interface complète pour modifier, formater et manipuler plusieurs fichiers simultanément en définissant une série d'opérations à appliquer automatiquement.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## Prérequis
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```bash
+pip install PySide6 ezodf qt_material --break-system-packages
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+## Lancement
+
+```bash
+python traitement_matrice.py
+```
+
+## Architecture de l'interface
+
+L'application est organisée en 5 onglets principaux, chacun gérant un aspect spécifique du traitement des fichiers.
+
+---
+
+## 1. Onglet "Fichiers"
+
+Cet onglet gère la sélection des fichiers à traiter et les options de sortie.
+
+### Boutons et fonctions
+
+**Bouton "Ajouter Fichiers"**
+- Ouvre un explorateur de fichiers pour sélectionner un ou plusieurs fichiers .ods
+- Les fichiers sélectionnés apparaissent dans la liste à gauche
+- Permet la sélection multiple
+
+**Bouton "Ajouter Dossier"**
+- Scanne un dossier entier à la recherche de fichiers .ods
+- Trouve automatiquement tous les fichiers avec l'extension .ods dans le dossier sélectionné
+- Ajoute tous les fichiers trouvés à la liste de traitement
+
+**Bouton "Retirer Sélection"**
+- Supprime de la liste les fichiers actuellement sélectionnés
+- Permet de retirer des fichiers sans recommencer la sélection depuis zéro
+
+**Bouton "Vider Liste"**
+- Supprime tous les fichiers de la liste en une seule action
+- Réinitialise complètement la sélection
+
+**Bouton "Choisir Dossier de Sortie"**
+- Définit le répertoire où seront enregistrés les fichiers traités
+- Par défaut, utilise le dossier "output" dans le répertoire courant
+
+**Case à cocher "Utiliser dossier source comme sortie"**
+- Lorsque cochée, les fichiers traités sont enregistrés dans le même dossier que le fichier source
+- Ignore le dossier de sortie défini
+
+---
+
+## 2. Onglet "Structure"
+
+Cet onglet permet de définir des modifications structurelles sur les feuilles de calcul.
+
+### Formulaire d'ajout
+
+**Champ "Feuille"**
+- Nom de la feuille dans laquelle effectuer l'opération
+- Exemple : "Feuille1", "Données", "Résultats"
+
+**Menu déroulant "Action"**
+- **Insérer Lignes** : Insère des lignes vides à une position donnée
+- **Fusionner** : Fusionne plusieurs cellules en une seule
+- **Effacer** : Efface le contenu d'une plage de cellules
+
+**Champ "Détails" (contexte selon l'action)**
+- Pour "Insérer Lignes" : Format "X ligne(s) à partir de Y" (ex: "5 ligne(s) à partir de 10")
+- Pour "Fusionner" : Plage de cellules (ex: "A1:C3")
+- Pour "Effacer" : Plage de cellules à effacer (ex: "B2:D10")
+
+**Champ "Couleur Fond" (optionnel)**
+- Code couleur hexadécimal pour appliquer un fond coloré
+- Format : #RRGGBB (ex: #FF0000 pour rouge)
+- Utilisé uniquement avec "Insérer Lignes"
+
+**Bouton "Ajouter Action"**
+- Ajoute l'opération définie à la liste des actions structurelles
+- L'opération apparaît dans l'arbre en dessous
+
+**Bouton "Retirer Sélection"**
+- Supprime l'action sélectionnée dans l'arbre
+
+---
+
+## 3. Onglet "Contenu"
+
+Cet onglet permet d'insérer des valeurs ou des grilles de données dans les cellules.
+
+### Formulaire d'ajout
+
+**Champ "Feuille"**
+- Nom de la feuille cible
+
+**Menu déroulant "Type"**
+- **Valeur** : Insère une valeur unique dans une cellule ou remplit une plage avec la même valeur
+- **Grille** : Colle un tableau de données à partir d'une cellule de départ
+
+**Champ "Cellule/Plage"**
+- Pour "Valeur" : Cellule unique (ex: "A1") ou plage (ex: "A1:C5")
+- Pour "Grille" : Cellule de départ du coin supérieur gauche (ex: "B3")
+
+**Champ "Détails"**
+Pour le type "Valeur" :
+- Format : "type: valeur"
+- Types disponibles : string, int, float
+- Exemples : "string: Bonjour", "int: 42", "float: 3.14"
+
+Pour le type "Grille" :
+- Cliquer sur le bouton "Éditer Grille" ouvre une fenêtre
+- Permet de coller ou saisir un tableau de données
+- Supporte le format tabulé (copier-coller depuis Excel/Calc)
+- Supporte aussi le format CSV avec point-virgule
+
+**Bouton "Éditer Grille"**
+- Disponible uniquement pour le type "Grille"
+- Ouvre une fenêtre modale avec un champ texte multiligne
+- Permet de coller des données tabulées
+- Valide et stocke les données lors de la confirmation
+
+**Bouton "Ajouter Action"**
+- Ajoute l'opération de contenu à la liste
+
+**Bouton "Retirer Sélection"**
+- Supprime l'action sélectionnée
+
+---
+
+## 4. Onglet "Style"
+
+Cet onglet permet d'appliquer des formatages visuels aux cellules.
+
+### Formulaire d'ajout
+
+**Champ "Feuille"**
+- Nom de la feuille dans laquelle appliquer le style
+
+**Champ "Cellules"**
+- Liste de cellules séparées par des virgules
+- Exemple : "A1, B2, C3" ou "A1:A10"
+
+**Case à cocher "Gras"**
+- Applique le style gras au texte des cellules
+
+**Case à cocher "Retour à la ligne"**
+- Active le retour à la ligne automatique dans les cellules
+
+**Champ "Couleur Fond"**
+- Code couleur hexadécimal pour le fond de cellule
+- Format : #RRGGBB
+
+**Champ "Taille Police"**
+- Taille de la police en points
+- Exemple : 12, 14, 16
+
+**Bouton "Ajouter Style"**
+- Ajoute les paramètres de style à la liste
+- Génère un résumé textuel des options choisies
+
+**Bouton "Retirer Sélection"**
+- Supprime le style sélectionné
+
+---
+
+## 5. Onglet "Copie"
+
+Cet onglet permet de copier des plages de cellules d'un endroit à un autre, même entre différentes feuilles.
+
+### Formulaire d'ajout
+
+**Champ "Feuille Source"**
+- Nom de la feuille d'où copier les données
+
+**Champ "Plage Source"**
+- Plage de cellules à copier
+- Format : "A1:C5"
+
+**Champ "Feuille Destination"**
+- Nom de la feuille où coller les données
+- Tapez "idem" pour coller dans la même feuille que la source
+
+**Champ "Cellule Haut-Gauche Destination"**
+- Cellule de départ pour le collage
+- La plage copiée sera collée à partir de cette position
+
+**Case à cocher "Transposer"**
+- Lorsque cochée, inverse lignes et colonnes lors du collage
+- Utile pour transformer des données horizontales en verticales
+
+**Bouton "Ajouter Copie"**
+- Ajoute l'opération de copie à la liste
+
+**Bouton "Retirer Sélection"**
+- Supprime la copie sélectionnée
+
+---
+
+## 6. Onglet "Options"
+
+Cet onglet regroupe les options globales qui s'appliquent à tous les fichiers traités.
+
+### Options de nommage
+
+**Case à cocher "Incrémenter version dans le nom"**
+- Recherche un numéro de version dans le nom du fichier (format vX.Y.Z)
+- Incrémente automatiquement la dernière partie
+- Exemple : "rapport_v1.2.3.ods" devient "rapport_v1.2.4.ods"
+- Si aucune version n'est trouvée, le fichier est simplement copié
+
+**Champ "Remplacer texte entre parenthèses"**
+- Remplace le texte entre parenthèses dans le nom du fichier
+- Exemple : si le fichier s'appelle "rapport_(brouillon).ods" et que vous tapez "final", il devient "rapport_(final).ods"
+- Laissez vide pour ne pas modifier le texte entre parenthèses
+
+### Options de réinitialisation des couleurs
+
+**Case à cocher "Réinitialiser couleurs avant traitement"**
+- Efface toutes les couleurs de fond d'une zone avant d'appliquer les opérations
+- Utile pour nettoyer un fichier existant avant d'appliquer un nouveau formatage
+
+**Champ "Feuilles concernées"**
+- Liste des noms de feuilles séparés par des virgules
+- Exemple : "Feuille1, Données, Résultats"
+- Seules ces feuilles verront leurs couleurs réinitialisées
+
+**Champ "Ligne de début"**
+- Numéro de la première ligne à nettoyer (base 1)
+- Par défaut : 10
+
+**Champ "Lignes à exclure"**
+- Liste de numéros de lignes à ignorer lors du nettoyage
+- Séparés par des virgules
+- Exemple : "1, 2, 5" pour préserver les lignes 1, 2 et 5
+
+**Bouton "Couleurs Colonnes (A=...)"**
+- Ouvre une fenêtre permettant de définir des couleurs par colonne
+- Format : une ligne par colonne
+- Syntaxe : `LETTRE=#COULEUR`
+- Exemple :
+  ```
+  A=#FF0000
+  B=#00FF00
+  C=#0000FF
+  ```
+- Les colonnes définies ici seront automatiquement colorées après la réinitialisation
+
+---
+
+## Menu principal
+
+### Menu "Fichier"
+
+**"Sauvegarder Config"**
+- Enregistre toutes les opérations et options dans un fichier JSON
+- Permet de réutiliser une configuration complète ultérieurement
+- Sauvegarde :
+  - Les actions de structure
+  - Les actions de contenu
+  - Les styles
+  - Les copies
+  - Toutes les options globales
+
+**"Charger Config"**
+- Charge une configuration précédemment sauvegardée
+- Restaure complètement l'état de l'application
+- Remplace toutes les opérations actuelles
+
+**"Quitter"**
+- Ferme l'application
+
+---
+
+## Bouton de traitement
+
+**Bouton "TRAITER FICHIERS"** (en bas de fenêtre)
+- Lance le traitement par lots de tous les fichiers sélectionnés
+- Affiche une barre de progression
+- Exécute les opérations dans l'ordre :
+  1. Structure (insertion de lignes, fusion, effacement)
+  2. Contenu (valeurs et grilles)
+  3. Style (formatage)
+  4. Copie (duplication de cellules)
+- Applique les options globales (incrémentation version, réinitialisation couleurs)
+- Affiche un message de confirmation à la fin
+
+---
+
+## Ordre d'exécution des opérations
+
+Il est important de comprendre que les opérations sont exécutées dans un ordre précis :
+
+1. **Réinitialisation des couleurs** (si activée)
+2. **Structure** : Modifications structurelles de la feuille
+3. **Contenu** : Insertion de valeurs et grilles
+4. **Style** : Application du formatage
+5. **Copie** : Duplication de cellules
+
+Cet ordre garantit que les références de cellules restent cohérentes. Par exemple, si vous insérez 5 lignes à la ligne 10, les opérations suivantes doivent tenir compte de ce décalage.
+
+---
+
+## Astuces d'utilisation
+
+### Gestion des références de cellules
+
+- Toujours utiliser la notation A1 (ex: A1, B12, Z99)
+- Les plages s'écrivent avec deux points (ex: A1:C5)
+- Les références sont insensibles à la casse
+
+### Workflow recommandé
+
+1. Sélectionner les fichiers à traiter
+2. Définir d'abord les opérations structurelles (insertions, fusions)
+3. Ajouter ensuite le contenu
+4. Appliquer les styles
+5. Configurer les copies si nécessaire
+6. Vérifier les options globales
+7. Sauvegarder la configuration si vous comptez la réutiliser
+8. Lancer le traitement
+
+### Sauvegarde des configurations
+
+Pour éviter de reconfigurer l'application à chaque utilisation :
+- Créez une configuration pour chaque type de traitement récurrent
+- Utilisez des noms de fichiers explicites (ex: "config_rapport_mensuel.json")
+- Les configurations sont portables et peuvent être partagées
+
+### Débogage
+
+En cas d'erreur pendant le traitement :
+- Les erreurs sont affichées dans la console
+- Le fichier source n'est jamais modifié (un nouveau fichier est créé)
+- Vérifiez que les noms de feuilles existent dans vos fichiers
+- Vérifiez la syntaxe des plages de cellules
+
+---
+
+## Limitations connues
+
+- Les formules complexes dans les cellules copiées peuvent ne pas être préservées correctement
+- Le traitement de très gros fichiers (.ods > 50 MB) peut être lent
+- Les styles très spécifiques (dégradés, motifs complexes) ne sont pas supportés
+- Les graphiques et images ne sont pas modifiés par l'application
+
+---
+
+## Dépannage
+
+**L'application ne se lance pas**
+- Vérifiez que toutes les dépendances sont installées
+- Assurez-vous d'avoir Python 3.8 ou supérieur
+
+**Les fichiers traités sont corrompus**
+- Vérifiez que vos fichiers sources sont bien au format .ods valide
+- Essayez de les ouvrir dans LibreOffice avant traitement
+- Évitez les caractères spéciaux dans les noms de feuilles
+
+**Les couleurs ne s'appliquent pas**
+- Vérifiez le format hexadécimal : #RRGGBB (6 caractères après le #)
+- Exemple correct : #FF0000
+- Exemple incorrect : FF0000 ou #F00
+
+**Les plages de cellules ne fonctionnent pas**
+- Vérifiez la syntaxe : A1:C5 (pas d'espaces)
+- Assurez-vous que la plage existe dans la feuille
+- Les indices de colonnes vont jusqu'à ZZ
+
+---
 
 ## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Pour toute question ou problème, référez-vous au code source qui contient des commentaires détaillés sur chaque fonction.
