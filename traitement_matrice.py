@@ -1,15 +1,15 @@
 import sys
 import glob
 import re
-import datetime as dt
-import zipfile
-import tempfile
 import copy
+import datetime as dt
 import shutil
 import json
 from pathlib import Path
-from xml.etree import ElementTree as ET
 import ezodf
+from odf.opendocument import load as odf_load
+from odf.style import Style, TableCellProperties, ParagraphProperties, TextProperties
+from odf.namespaces import STYLENS, FONS, TABLENS, OFFICENS
 
 # --- IMPORTS QT (PySide6) ---
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -242,130 +242,77 @@ def render_out_name(src_path: Path, name_pattern: str, suffix_tpl: str, parenthe
     return sanitize_filename(out)
 
 
-# --- XML STYLE ENGINE ---
-# Le style dans les fichiers ODS est géré par des fichiers XML internes (content.xml).
-# Les fonctions suivantes manipulent directement ce XML pour appliquer des styles
-# qui ne sont pas directement supportés par ezodf, comme la couleur de fond.
+# --- ODF STYLE ENGINE ---
+# Le style dans les fichiers ODS est géré via l'API odfpy, qui permet de créer
+# et manipuler les styles directement en Python sans passer par du XML brut.
 
-def _build_styles_xml(style_defs, namespaces):
+def _make_odf_style(doc, style_name: str, cfg: dict):
     """
-    Fonction interne pour construire une liste d'éléments XML de style à partir
-    d'un dictionnaire de définitions.
+    Fonction interne pour créer un élément de style odfpy à partir d'un dictionnaire
+    de propriétés et l'ajouter aux styles automatiques du document.
 
     Args:
-        style_defs (dict): Un dictionnaire où les clés sont des noms de style et les
-                           valeurs sont des dictionnaires de propriétés (ex: {'background': '#FF0000'}).
-        namespaces (dict): Un dictionnaire des namespaces XML requis par OpenDocument.
-
-    Returns:
-        list[ET.Element]: Une liste d'éléments XML représentant les styles.
+        doc: Le document odfpy ouvert.
+        style_name (str): Le nom du style à créer.
+        cfg (dict): Dictionnaire de propriétés (ex: {'background': '#FF0000', 'bold': True}).
     """
-    styles = []
-    for style_name, cfg in style_defs.items():
-        # Crée l'élément <style:style> de base
-        style_elem = ET.Element(f"{{{namespaces['style']}}}style", attrib={f"{{{namespaces['style']}}}name": style_name,
-                                                                           f"{{{namespaces['style']}}}family": 'table-cell'})
+    style = Style(name=style_name, family="table-cell")
 
-        # Propriétés de la cellule (Fond, Alignement Vertical)
-        if cfg.get('background') or cfg.get('valign'):
-            tcp = ET.SubElement(style_elem, f"{{{namespaces['style']}}}table-cell-properties")
-            if cfg.get('background'):
-                tcp.set(f"{{{namespaces['fo']}}}background-color", cfg['background'])
-                tcp.set(f"{{{namespaces['fo']}}}border", '0.05pt solid #000000')  # Bordure fine noire par défaut
-            if cfg.get('valign'):
-                vmap = {'top': 'top', 'middle': 'middle', 'bottom': 'bottom'}
-                if cfg['valign'] in vmap: tcp.set(f"{{{namespaces['style']}}}vertical-align", vmap[cfg['valign']])
+    # Propriétés de la cellule (Fond, Alignement Vertical, Bordure)
+    if cfg.get('background') or cfg.get('valign'):
+        tcp_attrs = {}
+        if cfg.get('background'):
+            tcp_attrs['backgroundcolor'] = cfg['background']
+            tcp_attrs['border'] = '0.05pt solid #000000'  # Bordure fine noire par défaut
+        if cfg.get('valign'):
+            vmap = {'top': 'top', 'middle': 'middle', 'bottom': 'bottom'}
+            if cfg['valign'] in vmap:
+                tcp_attrs['verticalalign'] = vmap[cfg['valign']]
+        if cfg.get('wrap'):
+            tcp_attrs['wrapoption'] = 'wrap'
+        style.addElement(TableCellProperties(**tcp_attrs))
 
-        # Propriétés de paragraphe (Alignement H, Wrap)
-        if cfg.get('halign') or cfg.get('wrap'):
-            pp = ET.SubElement(style_elem, f"{{{namespaces['style']}}}paragraph-properties")
-            if cfg.get('halign'): pp.set(f"{{{namespaces['fo']}}}text-align", cfg['halign'])
-            if cfg.get('wrap'): pp.set(f"{{{namespaces['fo']}}}wrap-option", 'wrap')
+    # Propriétés de paragraphe (Alignement H)
+    if cfg.get('halign'):
+        style.addElement(ParagraphProperties(textalign=cfg['halign']))
 
-        # Propriétés de texte (Gras, Taille, Couleur)
-        if cfg.get('bold') or cfg.get('font_size'):
-            tp = ET.SubElement(style_elem, f"{{{namespaces['style']}}}text-properties")
-            if cfg.get('bold'):
-                tp.set(f"{{{namespaces['fo']}}}font-weight", 'bold')
-                tp.set(f"{{{namespaces['style']}}}font-weight-asian", 'bold')
-                tp.set(f"{{{namespaces['style']}}}font-weight-complex", 'bold')
-            if cfg.get('font_size'):
-                fsize = f"{cfg['font_size']}pt"
-                tp.set(f"{{{namespaces['fo']}}}font-size", fsize)
-                tp.set(f"{{{namespaces['style']}}}font-size-asian", fsize)
-                tp.set(f"{{{namespaces['style']}}}font-size-complex", fsize)
-            tp.set(f"{{{namespaces['fo']}}}color", '#000000')  # Texte Noir
-        styles.append(style_elem)
-    return styles
+    # Propriétés de texte (Gras, Taille, Couleur)
+    if cfg.get('bold') or cfg.get('font_size'):
+        tp_attrs = {'color': '#000000'}  # Texte Noir
+        if cfg.get('bold'):
+            tp_attrs['fontweight'] = 'bold'
+            tp_attrs['fontweightasian'] = 'bold'
+            tp_attrs['fontweightcomplex'] = 'bold'
+        if cfg.get('font_size'):
+            fsize = f"{cfg['font_size']}pt"
+            tp_attrs['fontsize'] = fsize
+            tp_attrs['fontsizeasian'] = fsize
+            tp_attrs['fontsizecomplex'] = fsize
+        style.addElement(TextProperties(**tp_attrs))
+
+    doc.automaticstyles.addElement(style)
 
 
-def apply_styles_via_xml(ods_path: str, style_defs: dict):
+def apply_styles_via_odf(ods_path: str, style_defs: dict):
     """
-    Applique des styles de cellule à un fichier ODS en manipulant directement
-    son contenu XML. C'est la méthode principale pour ajouter des styles
-    non supportés nativement par ezodf.
-
-    Le processus est le suivant :
-    1. Décompresse le fichier .ods dans un répertoire temporaire.
-    2. Parse le fichier 'content.xml' qui contient les données et les styles.
-    3. Génère les nouveaux éléments XML de style.
-    4. Insère ces éléments dans la section <office:automatic-styles> du XML.
-    5. Réécrit le 'content.xml' modifié.
-    6. Recompresse les fichiers pour recréer le fichier .ods.
+    Applique des styles de cellule à un fichier ODS via l'API odfpy.
 
     Args:
         ods_path (str): Le chemin vers le fichier .ods à modifier.
         style_defs (dict): Le dictionnaire de définitions de style à appliquer.
     """
     if not style_defs: return
-    # Définition des namespaces XML utilisés dans les fichiers ODS
-    namespaces = {'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
-                  'style': 'urn:oasis:names:tc:opendocument:xmlns:style:1.0',
-                  'fo': 'urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0',
-                  'table': 'urn:oasis:names:tc:opendocument:xmlns:table:1.0'}
-    for p, u in namespaces.items(): ET.register_namespace(p, u)
-    
     try:
-        # Utilise un répertoire temporaire pour extraire les fichiers de l'archive
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
-            with zipfile.ZipFile(ods_path, 'r') as z:
-                z.extractall(tmpdir)
-            
-            cxml = tmpdir / 'content.xml'
-            if not cxml.exists(): return
-            
-            # Parse le fichier XML principal
-            tree = ET.parse(cxml)
-            root = tree.getroot()
-            
-            # Construit les nouveaux styles XML
-            styles_xml = _build_styles_xml(style_defs, namespaces)
-            
-            # Trouve le conteneur de styles automatiques et y ajoute les nouveaux styles
-            auto_styles = root.find('.//office:automatic-styles', namespaces)
-            if auto_styles is None: 
-                auto_styles = ET.SubElement(root, f"{{{namespaces['office']}}}automatic-styles")
-            for se in styles_xml: auto_styles.append(se)
-            
-            # Sauvegarde l'arbre XML modifié
-            tree.write(cxml, encoding='utf-8', xml_declaration=True)
-
-            # Petite correction pour s'assurer que la déclaration XML est présente
-            with open(cxml, 'r', encoding='utf-8') as f: content = f.read()
-            if not content.startswith('<?xml'): content = '<?xml version="1.0" encoding="UTF-8"?>\n' + content
-            with open(cxml, 'w', encoding='utf-8') as f: f.write(content)
-            
-            # Reconstruit l'archive ODS avec le fichier modifié
-            with zipfile.ZipFile(ods_path, 'w', zipfile.ZIP_DEFLATED) as zo:
-                for fp in tmpdir.rglob('*'):
-                    if fp.is_file(): zo.write(fp, fp.relative_to(tmpdir))
+        doc = odf_load(ods_path)
+        for style_name, cfg in style_defs.items():
+            _make_odf_style(doc, style_name, cfg)
+        doc.save(ods_path)
     except Exception as e:
-        print(f"Err XML Style: {e}")
+        print(f"Err ODF Style: {e}")
 
 
-def restore_colors_preserve_formatting_xml(ods_path, sheet_name, start_row, end_row, column_colors, exclude_rows=None,
-                                           protected_prefix=None):
+def restore_colors_preserve_formatting_odf(ods_path, sheet_name, start_row, end_row, column_colors,
+                                           exclude_rows=None, protected_prefix=None):
     """
     Fonction clé pour réinitialiser les couleurs de fond d'une plage de cellules
     tout en préservant le formatage existant (gras, bordures, etc.).
@@ -389,121 +336,106 @@ def restore_colors_preserve_formatting_xml(ods_path, sheet_name, start_row, end_
                                           faites dans la session courante.
     """
     if exclude_rows is None: exclude_rows = []
-    namespaces = {'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
-                  'style': 'urn:oasis:names:tc:opendocument:xmlns:style:1.0',
-                  'fo': 'urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0',
-                  'table': 'urn:oasis:names:tc:opendocument:xmlns:table:1.0',
-                  'text': 'urn:oasis:names:tc:opendocument:xmlns:text:1.0'}
-    for p, u in namespaces.items(): ET.register_namespace(p, u)
-    
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
-            with zipfile.ZipFile(ods_path, 'r') as z: z.extractall(tmpdir)
-            
-            cxml = tmpdir / 'content.xml'
-            if not cxml.exists(): return
-            
-            tree = ET.parse(cxml)
-            root = tree.getroot()
-            
-            # Recherche de la feuille de calcul cible par son nom
-            spreadsheet = root.find('.//office:spreadsheet', namespaces)
-            target_sheet = None
-            for tbl in spreadsheet.findall('.//table:table', namespaces):
-                if tbl.get(f"{{{namespaces['table']}}}name") == sheet_name:
-                    target_sheet = tbl
-                    break
-            if not target_sheet: return
+        doc = odf_load(ods_path)
 
-            auto_styles = root.find('.//office:automatic-styles', namespaces)
-            if auto_styles is None: auto_styles = ET.SubElement(root, f"{{{namespaces['office']}}}automatic-styles")
-            
-            style_mapping = {}  # Cache pour éviter de recréer des styles identiques
-            new_style_counter = 1
-            
-            rows = target_sheet.findall('.//table:table-row', namespaces)
-            for r_idx, r_elem in enumerate(rows):
-                # Filtre les lignes en dehors de la plage spécifiée
-                if r_idx < start_row: continue
-                if end_row is not None and r_idx > end_row: break
-                if r_idx in exclude_rows: continue
-                
-                curr_col = 0
-                for cell in list(r_elem):
-                    tag = cell.tag.split('}')[-1]
-                    # Gère les colonnes répétées (cellules vides qui suivent une cellule non vide)
-                    rep = int(cell.get(f"{{{namespaces['table']}}}number-columns-repeated") or 1)
-                    
-                    if 'covered' in tag: # Cellule couverte par un 'span'
+        # Construit un dictionnaire nom_style -> élément Style pour recherche rapide
+        existing_styles = {}
+        for s in doc.automaticstyles.childNodes:
+            sname = s.attributes.get((STYLENS, 'name'))
+            if sname:
+                existing_styles[sname] = s
+
+        # Recherche de la feuille cible par son nom
+        target_sheet = None
+        for sheet in doc.spreadsheet.childNodes:
+            if sheet.attributes.get((TABLENS, 'name')) == sheet_name:
+                target_sheet = sheet
+                break
+        if not target_sheet: return
+
+        style_mapping = {}  # Cache (style_original, nouvelle_couleur) -> nouveau_nom
+        new_style_counter = [1]  # liste pour mutabilité dans la closure
+
+        def get_or_create_restore_style(current_style_name, tcolor):
+            key = (current_style_name or "Default", tcolor)
+            if key in style_mapping:
+                return style_mapping[key]
+
+            n_name = f"RestoreColor{new_style_counter[0]}"
+            new_style_counter[0] += 1
+            new_style = Style(name=n_name, family="table-cell")
+
+            # Copie les propriétés de l'ancien style en remplaçant la couleur de fond
+            tcp_created = False
+            if current_style_name and current_style_name in existing_styles:
+                ex_style = existing_styles[current_style_name]
+                for ch in ex_style.childNodes:
+                    if ch.qname == TableCellProperties().qname:
+                        # Récupère les attributs existants sauf background-color
+                        tcp_attrs = {}
+                        for attr, val in ch.attributes.items():
+                            attr_name = attr[1]  # (namespace, localname) -> localname
+                            if attr_name != 'background-color':
+                                tcp_attrs[attr_name.replace('-', '')] = val
+                        tcp_attrs['backgroundcolor'] = tcolor
+                        new_style.addElement(TableCellProperties(**tcp_attrs))
+                        tcp_created = True
+                    else:
+                        # Copie les autres propriétés (texte, paragraphe) telles quelles
+                        new_style.addElement(copy.deepcopy(ch))
+
+            # Si aucune propriété cellule n'existait, on en crée une nouvelle
+            if not tcp_created:
+                new_style.addElement(TableCellProperties(
+                    backgroundcolor=tcolor,
+                    border='0.05pt solid #000000'
+                ))
+
+            doc.automaticstyles.addElement(new_style)
+            existing_styles[n_name] = new_style
+            style_mapping[key] = n_name
+            return n_name
+
+        # Parcours des lignes de la feuille cible
+        r_idx = 0
+        for row in target_sheet.childNodes:
+            if row.qname != (TABLENS, 'table-row'):
+                continue
+            if r_idx < start_row:
+                r_idx += 1
+                continue
+            if end_row is not None and r_idx > end_row:
+                break
+            if r_idx in exclude_rows:
+                r_idx += 1
+                continue
+
+            curr_col = 0
+            for cell in row.childNodes:
+                rep = int(cell.attributes.get((TABLENS, 'number-columns-repeated')) or 1)
+
+                if cell.qname == (TABLENS, 'covered-table-cell'):
+                    curr_col += rep
+                    continue
+
+                if cell.qname == (TABLENS, 'table-cell'):
+                    current_style_name = cell.attributes.get((TABLENS, 'style-name'))
+
+                    # Protection des styles de la session courante
+                    if protected_prefix and current_style_name and current_style_name.startswith(protected_prefix):
                         curr_col += rep
                         continue
-                    
-                    if 'table-cell' in tag:
-                        current_style_name = cell.get(f"{{{namespaces['table']}}}style-name")
 
-                        # --- PROTECTION DES NOUVEAUX STYLES ---
-                        # Si le style a été ajouté pendant cette session, on l'ignore.
-                        if protected_prefix and current_style_name and current_style_name.startswith(protected_prefix):
-                            curr_col += rep
-                            continue
+                    tcolor = column_colors.get(curr_col)
+                    if tcolor:
+                        n_name = get_or_create_restore_style(current_style_name, tcolor)
+                        cell.attributes[(TABLENS, 'style-name')] = n_name
 
-                        # Applique la nouvelle couleur de fond si définie pour cette colonne
-                        tcolor = column_colors.get(curr_col)
-                        if tcolor:
-                            # Clé unique pour le style : (style_original, nouvelle_couleur)
-                            key = (current_style_name or "Default", tcolor)
-                            
-                            # Si on n'a pas encore créé de style combiné, on le fait maintenant
-                            if key not in style_mapping:
-                                n_name = f"RestoreColor{new_style_counter}"
-                                new_style_counter += 1
-                                
-                                # Crée un nouvel élément de style
-                                n_style = ET.Element(f"{{{namespaces['style']}}}style",
-                                                     attrib={f"{{{namespaces['style']}}}name": n_name,
-                                                             f"{{{namespaces['style']}}}family": 'table-cell'})
-                                
-                                # Copie toutes les propriétés de l'ancien style, SAUF la couleur de fond
-                                tcp_created = False
-                                if current_style_name:
-                                    ex_style = auto_styles.find(f".//style:style[@style:name='{current_style_name}']", namespaces)
-                                    if ex_style is not None:
-                                        for ch in ex_style:
-                                            # Copie les propriétés de la cellule
-                                            if ch.tag == f"{{{namespaces['style']}}}table-cell-properties":
-                                                tcp = ET.SubElement(n_style, ch.tag)
-                                                tcp_created = True
-                                                for k, v in ch.attrib.items():
-                                                    if 'background-color' not in k: tcp.set(k, v)
-                                                tcp.set(f"{{{namespaces['fo']}}}background-color", tcolor)
-                                            else:
-                                                # Copie les autres propriétés (texte, paragraphe)
-                                                n_style.append(copy.deepcopy(ch))
-                                
-                                # Si aucune propriété n'existait, on en crée une nouvelle
-                                if not tcp_created:
-                                    tcp = ET.SubElement(n_style, f"{{{namespaces['style']}}}table-cell-properties")
-                                    tcp.set(f"{{{namespaces['fo']}}}background-color", tcolor)
-                                    tcp.set(f"{{{namespaces['fo']}}}border", '0.05pt solid #000000') # Bordure par défaut
-                                
-                                auto_styles.append(n_style)
-                                style_mapping[key] = n_name
-                            
-                            # Applique le nouveau nom de style (ou le style recyclé) à la cellule
-                            cell.set(f"{{{namespaces['table']}}}style-name", style_mapping[key])
-                    
-                    curr_col += rep
-            
-            # Sauvegarde et recréation de l'archive ODS
-            tree.write(cxml, encoding='utf-8', xml_declaration=True)
-            with open(cxml, 'r', encoding='utf-8') as f: content = f.read()
-            if not content.startswith('<?xml'): content = '<?xml version="1.0" encoding="UTF-8"?>\n' + content
-            with open(cxml, 'w', encoding='utf-8') as f: f.write(content)
-            
-            with zipfile.ZipFile(ods_path, 'w', zipfile.ZIP_DEFLATED) as zo:
-                for fp in tmpdir.rglob('*'):
-                    if fp.is_file(): zo.write(fp, fp.relative_to(tmpdir))
+                curr_col += rep
+            r_idx += 1
+
+        doc.save(ods_path)
     except Exception as e:
         print(f"Err Restore Color: {e}")
 
@@ -535,7 +467,7 @@ def process_file(src_path: Path, out_dir: Path, suffix_tpl: str, name_pattern: s
 
     # 1. Génère un préfixe unique pour cette session. Tous les styles créés
     #    pendant cette exécution commenceront par ce préfixe (ex: "Run_167..._").
-    #    Cela permet à `restore_colors_preserve_formatting_xml` de ne pas effacer
+    #    Cela permet à `restore_colors_preserve_formatting_odf` de ne pas effacer
     #    les couleurs que l'on vient juste d'ajouter.
     session_prefix = f"Run_{int(dt.datetime.now().timestamp())}_"
 
@@ -673,7 +605,7 @@ def process_file(src_path: Path, out_dir: Path, suffix_tpl: str, name_pattern: s
         sn_list = ct_restore['sheet_names']
         target_sheets = sn_list if sn_list else [s.name for s in doc.sheets]
         for sname in target_sheets:
-            restore_colors_preserve_formatting_xml(
+            restore_colors_preserve_formatting_odf(
                 str(out_path),
                 sname,
                 ct_restore['start_row'],
@@ -684,7 +616,7 @@ def process_file(src_path: Path, out_dir: Path, suffix_tpl: str, name_pattern: s
             )
 
     # Applique tous les nouveaux styles (couleurs, gras, etc.) qui ont été définis.
-    if style_defs: apply_styles_via_xml(str(out_path), style_defs)
+    if style_defs: apply_styles_via_odf(str(out_path), style_defs)
     
     return f"Succès: {out_path.name}"
 
