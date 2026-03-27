@@ -5,6 +5,8 @@ import re
 import datetime as dt
 import shutil
 import json
+import zipfile
+import tempfile
 from pathlib import Path
 import ezodf
 from odf.opendocument import load as odf_load
@@ -247,6 +249,38 @@ def render_out_name(src_path: Path, name_pattern: str, suffix_tpl: str, parenthe
 # Le style dans les fichiers ODS est géré via l'API odfpy, qui permet de créer
 # et manipuler les styles directement en Python sans passer par du XML brut.
 
+def _fix_ods_zip(ods_path: str):
+    """
+    Corrige le fichier ODS après une sauvegarde odfpy en supprimant les entrées
+    'mimetype' dupliquées. odfpy écrit mimetype une première fois explicitement
+    (non compressé), puis une seconde fois depuis le fichier source (compressé),
+    ce que LibreOffice interprète comme une corruption.
+
+    Args:
+        ods_path (str): Chemin du fichier ODS à corriger.
+    """
+    tmp = ods_path + '.tmp'
+    try:
+        with zipfile.ZipFile(ods_path, 'r') as zin, \
+             zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zout:
+            mimetype_written = False
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == 'mimetype':
+                    if mimetype_written:
+                        continue  # Ignore les doublons
+                    # Écrit mimetype en premier, non compressé (spec ODF)
+                    zi = zipfile.ZipInfo('mimetype')
+                    zi.compress_type = zipfile.ZIP_STORED
+                    zout.writestr(zi, data)
+                    mimetype_written = True
+                else:
+                    zout.writestr(item, data)
+        shutil.move(tmp, ods_path)
+    except Exception as e:
+        Path(tmp).unlink(missing_ok=True)
+        print(f"Err fix zip: {e}")
+
 def _make_odf_style(doc, style_name: str, cfg: dict):
     """
     Fonction interne pour créer un élément de style odfpy à partir d'un dictionnaire
@@ -308,6 +342,7 @@ def apply_styles_via_odf(ods_path: str, style_defs: dict):
         for style_name, cfg in style_defs.items():
             _make_odf_style(doc, style_name, cfg)
         doc.save(ods_path)
+        _fix_ods_zip(ods_path)
     except Exception as e:
         print(f"Err ODF Style: {e}")
 
@@ -433,6 +468,7 @@ def restore_colors_preserve_formatting_odf(ods_path, sheet_name, start_row, end_
             r_idx += 1
 
         doc.save(ods_path)
+        _fix_ods_zip(ods_path)
     except Exception as e:
         print(f"Err Restore Color: {e}")
 
