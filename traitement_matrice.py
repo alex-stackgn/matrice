@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import glob
 import re
@@ -371,19 +372,12 @@ def restore_colors_preserve_formatting_odf(ods_path, sheet_name, start_row, end_
             if current_style_name and current_style_name in existing_styles:
                 ex_style = existing_styles[current_style_name]
                 for ch in ex_style.childNodes:
+                    cloned = copy.deepcopy(ch)
                     if ch.qname == TableCellProperties().qname:
-                        # Récupère les attributs existants sauf background-color
-                        tcp_attrs = {}
-                        for attr, val in ch.attributes.items():
-                            attr_name = attr[1]  # (namespace, localname) -> localname
-                            if attr_name != 'background-color':
-                                tcp_attrs[attr_name.replace('-', '')] = val
-                        tcp_attrs['backgroundcolor'] = tcolor
-                        new_style.addElement(TableCellProperties(**tcp_attrs))
+                        # Remplace uniquement background-color, conserve tous les autres attributs
+                        cloned.attributes[(FONS, 'background-color')] = tcolor
                         tcp_created = True
-                    else:
-                        # Copie les autres propriétés (texte, paragraphe) telles quelles
-                        new_style.addElement(copy.deepcopy(ch))
+                    new_style.addElement(cloned)
 
             # Si aucune propriété cellule n'existait, on en crée une nouvelle
             if not tcp_created:
