@@ -2,7 +2,6 @@
 import sys
 import glob
 import re
-import copy
 import datetime as dt
 import shutil
 import json
@@ -10,6 +9,7 @@ from pathlib import Path
 import ezodf
 from odf.opendocument import load as odf_load
 from odf.style import Style, TableCellProperties, ParagraphProperties, TextProperties
+from odf.element import Element as ODFElement
 from odf.namespaces import STYLENS, FONS, TABLENS, OFFICENS
 
 # --- IMPORTS QT (PySide6) ---
@@ -367,17 +367,20 @@ def restore_colors_preserve_formatting_odf(ods_path, sheet_name, start_row, end_
             new_style_counter[0] += 1
             new_style = Style(name=n_name, family="table-cell")
 
-            # Copie les propriétés de l'ancien style en remplaçant la couleur de fond
+            # Copie les propriétés de l'ancien style en remplaçant la couleur de fond.
+            # Les éléments chargés depuis le fichier sont des instances génériques de Element,
+            # on crée donc une sous-classe dynamique avec le bon qname pour les recréer proprement.
             tcp_created = False
             if current_style_name and current_style_name in existing_styles:
                 ex_style = existing_styles[current_style_name]
                 for ch in ex_style.childNodes:
-                    cloned = copy.deepcopy(ch)
+                    TmpCls = type('_OdfElem', (ODFElement,), {'qname': ch.qname})
+                    new_elem = TmpCls()
+                    new_elem.attributes.update(ch.attributes)
                     if ch.qname == TableCellProperties().qname:
-                        # Remplace uniquement background-color, conserve tous les autres attributs
-                        cloned.attributes[(FONS, 'background-color')] = tcolor
+                        new_elem.attributes[(FONS, 'background-color')] = tcolor
                         tcp_created = True
-                    new_style.addElement(cloned)
+                    new_style.addElement(new_elem)
 
             # Si aucune propriété cellule n'existait, on en crée une nouvelle
             if not tcp_created:
