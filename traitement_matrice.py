@@ -14,6 +14,8 @@ from odf.style import Style, TableCellProperties, ParagraphProperties, TextPrope
 from odf.element import Element as ODFElement
 from odf.namespaces import STYLENS, FONS, TABLENS, OFFICENS
 
+SHEET_NAMES = ["Suivi", "Matrice_DTNUM", "Matrice_STIG", "Histo_postV2"]
+
 # --- IMPORTS QT (PySide6) ---
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QLabel, QPushButton, QListWidget,
@@ -805,8 +807,9 @@ class ModernODSApp(QMainWindow):
         h3.addWidget(self.btn_colors)
         
         h4 = QHBoxLayout()
-        self.input_reset_sheets = QLineEdit();
-        self.input_reset_sheets.setPlaceholderText("Feuilles (vide=toutes)")
+        self.input_reset_sheets = QComboBox()
+        self.input_reset_sheets.addItem("Toutes", "")
+        for _sn in SHEET_NAMES: self.input_reset_sheets.addItem(_sn, _sn)
         self.input_reset_start = QLineEdit("10");
         self.input_reset_start.setPlaceholderText("Ligne Début")
         self.input_reset_excl = QLineEdit();
@@ -855,8 +858,8 @@ class ModernODSApp(QMainWindow):
         """Construit l'interface de l'onglet 'Édition Contenu'."""
         layout = QVBoxLayout(self.tab_content)
         form = QHBoxLayout()
-        self.c_sheet = QLineEdit();
-        self.c_sheet.setPlaceholderText("Feuille")
+        self.c_sheet = QComboBox()
+        for _sn in SHEET_NAMES: self.c_sheet.addItem(_sn)
         self.c_range = QLineEdit();
         self.c_range.setPlaceholderText("Cellule (A1) ou Plage")
         self.c_type = QComboBox();
@@ -914,8 +917,8 @@ class ModernODSApp(QMainWindow):
         self.s_action.setMinimumWidth(120)
 
         # 2. Feuille
-        self.s_sheet = QLineEdit()
-        self.s_sheet.setPlaceholderText("Feuille")
+        self.s_sheet = QComboBox()
+        for _sn in SHEET_NAMES: self.s_sheet.addItem(_sn)
 
         # 3. Qté et Cible
         self.s_count = QLineEdit()
@@ -974,8 +977,8 @@ class ModernODSApp(QMainWindow):
         """Construit l'interface de l'onglet 'Mise en Forme'."""
         layout = QVBoxLayout(self.tab_style)
         r1 = QHBoxLayout()
-        self.y_sheet = QLineEdit();
-        self.y_sheet.setPlaceholderText("Feuille")
+        self.y_sheet = QComboBox()
+        for _sn in SHEET_NAMES: self.y_sheet.addItem(_sn)
         self.y_cells = QLineEdit();
         self.y_cells.setPlaceholderText("Cellules (A1, B2...)")
         self.y_bold = QCheckBox("Gras");
@@ -1042,15 +1045,16 @@ class ModernODSApp(QMainWindow):
         """Construit l'interface de l'onglet 'Copie / Transfert'."""
         layout = QVBoxLayout(self.tab_copy)
         r1 = QHBoxLayout()
-        self.cp_src_s = QLineEdit();
-        self.cp_src_s.setPlaceholderText("Source Feuille")
+        self.cp_src_s = QComboBox()
+        for _sn in SHEET_NAMES: self.cp_src_s.addItem(_sn)
         self.cp_src_r = QLineEdit();
         self.cp_src_r.setPlaceholderText("Plage (A1:C5)")
         r1.addWidget(self.cp_src_s);
         r1.addWidget(self.cp_src_r)
         r2 = QHBoxLayout()
-        self.cp_dst_s = QLineEdit();
-        self.cp_dst_s.setPlaceholderText("Dest Feuille (vide=idem)")
+        self.cp_dst_s = QComboBox()
+        self.cp_dst_s.addItem("idem", "")
+        for _sn in SHEET_NAMES: self.cp_dst_s.addItem(_sn, _sn)
         self.cp_dst_tl = QLineEdit();
         self.cp_dst_tl.setPlaceholderText("Dest A1")
         self.cp_trans = QCheckBox("Transposer")
@@ -1110,7 +1114,7 @@ class ModernODSApp(QMainWindow):
 
         # 2. Remplissage du formulaire
         self.s_action.setCurrentText(act)
-        self.s_sheet.setText(sh)
+        self.s_sheet.setCurrentText(sh)
 
         # Analyse intelligente du détail ("2 avant 15" vs "A1:B2")
         if "avant" in detail and act == "Insérer Lignes":
@@ -1150,13 +1154,13 @@ class ModernODSApp(QMainWindow):
             # Cas spécial Grille : on recharge le texte caché
             raw_grid = item.data(0, Qt.UserRole)
             self.c_grid_txt.setPlainText(raw_grid)
-            self.c_sheet.setText(sh)
+            self.c_sheet.setCurrentText(sh)
             self.c_range.setText(target)
             # On vide les champs valeurs simples pour éviter la confusion
             self.c_val.clear()
         else:
             # Cas Valeur simple (ex détail: "string: Bonjour")
-            self.c_sheet.setText(sh)
+            self.c_sheet.setCurrentText(sh)
             self.c_range.setText(target)
             if ": " in detail:
                 t_str, v_str = detail.split(": ", 1)
@@ -1175,7 +1179,7 @@ class ModernODSApp(QMainWindow):
 
         sh, cells, desc = item.text(0), item.text(1), item.text(2)
 
-        self.y_sheet.setText(sh)
+        self.y_sheet.setCurrentText(sh)
         self.y_cells.setText(cells)
 
         # Analyse de la chaîne de description pour re-configurer l'UI
@@ -1211,9 +1215,9 @@ class ModernODSApp(QMainWindow):
 
         ss, sr, ds, dt, trans = item.text(0), item.text(1), item.text(2), item.text(3), item.text(4)
 
-        self.cp_src_s.setText(ss)
+        self.cp_src_s.setCurrentText(ss)
         self.cp_src_r.setText(sr)
-        self.cp_dst_s.setText("" if ds == "idem" else ds)
+        self.cp_dst_s.setCurrentText("idem" if ds == "idem" else ds)
         self.cp_dst_tl.setText(dt)
         self.cp_trans.setChecked(trans == "True")
 
@@ -1260,12 +1264,12 @@ class ModernODSApp(QMainWindow):
 
     def add_content_val(self):
         """Ajoute une opération 'set_value' ou 'fill_range' à l'arbre de contenu."""
-        s, r, t, v = self.c_sheet.text(), self.c_range.text(), self.c_type.currentText(), self.c_val.text()
+        s, r, t, v = self.c_sheet.currentText(), self.c_range.text(), self.c_type.currentText(), self.c_val.text()
         if s and r: QTreeWidgetItem(self.tree_cont, ["Valeur", s, r, f"{t}: {v}"])
 
     def add_content_grid(self):
         """Ajoute une opération 'paste_grid' à l'arbre de contenu."""
-        s, r, txt = self.c_sheet.text(), self.c_range.text(), self.c_grid_txt.toPlainText().strip()
+        s, r, txt = self.c_sheet.currentText(), self.c_range.text(), self.c_grid_txt.toPlainText().strip()
         if s and r and txt:
             item = QTreeWidgetItem(self.tree_cont, ["Grille", s, r, f"{len(txt.splitlines())} lignes"])
             # Stocke le texte brut de la grille dans l'item lui-même pour une utilisation ultérieure
@@ -1276,7 +1280,7 @@ class ModernODSApp(QMainWindow):
         """Ajoute une opération de structure (insérer, fusionner, effacer) à l'arbre."""
         # 1. Récupération des données
         act = self.s_action.currentText()
-        sh = self.s_sheet.text()
+        sh = self.s_sheet.currentText()
         target = self.s_target.text()
         count = self.s_count.text() or "1"
         col = self.s_color.currentData()  # On récupère le code hexa caché
@@ -1319,7 +1323,7 @@ class ModernODSApp(QMainWindow):
 
     def add_style_action(self):
         """Ajoute une opération de style à l'arbre."""
-        s, c = self.y_sheet.text(), self.y_cells.text()
+        s, c = self.y_sheet.currentText(), self.y_cells.text()
         if s and c:
             desc = []
             if self.y_bold.isChecked(): desc.append("Gras")
@@ -1336,7 +1340,7 @@ class ModernODSApp(QMainWindow):
 
     def add_copy_action(self):
         """Ajoute une opération de copie de plage à l'arbre."""
-        ss, sr, ds, dt = self.cp_src_s.text(), self.cp_src_r.text(), self.cp_dst_s.text(), self.cp_dst_tl.text()
+        ss, sr, ds, dt = self.cp_src_s.currentText(), self.cp_src_r.text(), self.cp_dst_s.currentData(), self.cp_dst_tl.text()
         if ss and sr and dt: QTreeWidgetItem(self.tree_copy,
                                              [ss, sr, ds if ds else "idem", dt, str(self.cp_trans.isChecked())])
 
@@ -1355,7 +1359,7 @@ class ModernODSApp(QMainWindow):
             "options": {
                 "out_dir": self.output_dir, "src_dir": self.chk_src_dir.isChecked(),
                 "bump": self.chk_version.isChecked(), "paren": self.input_paren.text(),
-                "reset": self.chk_reset.isChecked(), "rst_sheets": self.input_reset_sheets.text(),
+                "reset": self.chk_reset.isChecked(), "rst_sheets": self.input_reset_sheets.currentText(),
                 "rst_start": self.input_reset_start.text(), "rst_excl": self.input_reset_excl.text(),
                 "colors_txt": self.custom_colors_txt
             }, "actions": {"content": [], "struct": [], "style": [], "copy": []}
@@ -1402,7 +1406,7 @@ class ModernODSApp(QMainWindow):
             self.chk_version.setChecked(opts.get("bump", True))
             self.input_paren.setText(opts.get("paren", ""))
             self.chk_reset.setChecked(opts.get("reset", False))
-            self.input_reset_sheets.setText(opts.get("rst_sheets", ""))
+            self.input_reset_sheets.setCurrentText(opts.get("rst_sheets", "Toutes"))
             self.input_reset_start.setText(opts.get("rst_start", "10"))
             self.input_reset_excl.setText(opts.get("rst_excl", ""))
             self.custom_colors_txt = opts.get("colors_txt", self.custom_colors_txt)
@@ -1503,8 +1507,8 @@ class ModernODSApp(QMainWindow):
             "reset_start_row": int(self.input_reset_start.text()) - 1, "reset_end_row": None,
             "exclude_rows": [int(x) - 1 for x in self.input_reset_excl.text().split(',') if x.strip().isdigit()]
         }
-        rst = self.input_reset_sheets.text().strip()
-        if rst: opts["reset_colors_sheets"] = [x.strip() for x in rst.split(',')]
+        rst = self.input_reset_sheets.currentData()
+        if rst: opts["reset_colors_sheets"] = [rst]
 
         cc = {}
         for line in self.custom_colors_txt.splitlines():
